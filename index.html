@@ -1,0 +1,1264 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#a9d8de">
+  <title>Тихий луг — мир на WebGPU</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      --ink: #f3f5e8;
+      --muted: rgba(243, 245, 232, .67);
+      --glass: rgba(18, 35, 38, .34);
+      --line: rgba(255, 255, 255, .22);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #add9dc;
+    }
+
+    body { color: var(--ink); }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }
+
+    .grain {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      opacity: .14;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.19'/%3E%3C/svg%3E");
+      mix-blend-mode: soft-light;
+    }
+
+    .topbar {
+      position: fixed;
+      z-index: 2;
+      inset: 27px 32px auto;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      pointer-events: none;
+      text-shadow: 0 2px 18px rgba(20, 42, 43, .28);
+    }
+
+    .brand { display: flex; gap: 12px; align-items: center; }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: rgba(255,255,255,.13);
+      font-size: 15px;
+    }
+    .brand-name { font-size: 12px; letter-spacing: .22em; text-transform: uppercase; }
+    .brand-subtitle { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: .11em; }
+
+    .coordinates {
+      padding-top: 6px;
+      color: rgba(248, 249, 235, .83);
+      font: 10px/1.8 "Cascadia Code", Consolas, monospace;
+      letter-spacing: .08em;
+      text-align: right;
+    }
+
+    .bottom {
+      position: fixed;
+      z-index: 2;
+      inset: auto 32px 27px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      pointer-events: none;
+      text-shadow: 0 2px 16px rgba(20, 42, 43, .32);
+    }
+
+    .location { display: flex; align-items: center; gap: 11px; }
+    .location-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #e7f2c9;
+      box-shadow: 0 0 14px rgba(231, 242, 201, .8);
+    }
+    .location-name { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; }
+    .location-note { margin-top: 5px; color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+
+    .actions { display: flex; gap: 8px; pointer-events: auto; }
+    button {
+      min-height: 36px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--ink);
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      font: 10px "Segoe UI", sans-serif;
+      letter-spacing: .09em;
+      cursor: pointer;
+      transition: background .2s, border-color .2s;
+    }
+    button:hover { background: rgba(255,255,255,.19); border-color: rgba(255,255,255,.42); }
+
+    .crosshair {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      top: 50%;
+      width: 5px;
+      height: 5px;
+      border: 1px solid rgba(255,255,255,.82);
+      border-radius: 50%;
+      box-shadow: 0 0 5px rgba(0,0,0,.4);
+      opacity: 0;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+    body.playing .crosshair { opacity: .9; }
+
+    .welcome {
+      position: fixed;
+      z-index: 3;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(180deg, rgba(38, 65, 68, .06), rgba(20, 38, 39, .29));
+      transition: opacity .65s, visibility .65s;
+      pointer-events: none;
+    }
+    .welcome.hidden { visibility: hidden; opacity: 0; pointer-events: none; }
+    .card {
+      width: min(440px, 100%);
+      padding: 41px 44px 35px;
+      border: 1px solid rgba(255,255,255,.28);
+      background: rgba(25, 45, 45, .34);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 22px 80px rgba(29, 49, 45, .12);
+      text-align: center;
+      pointer-events: auto;
+    }
+    .eyebrow {
+      color: rgba(245,248,229,.76);
+      font-size: 9px;
+      letter-spacing: .28em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 17px 0 12px;
+      font-size: clamp(35px, 8vw, 48px);
+      font-weight: 300;
+      letter-spacing: .045em;
+    }
+    .intro {
+      max-width: 290px;
+      margin: 0 auto;
+      color: rgba(244,247,233,.76);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+    .start {
+      min-width: 164px;
+      min-height: 43px;
+      margin-top: 26px;
+      border-color: rgba(255,255,255,.48);
+      background: rgba(237, 241, 220, .16);
+      letter-spacing: .14em;
+    }
+    .key-guide {
+      display: flex;
+      justify-content: center;
+      gap: 17px;
+      margin-top: 27px;
+      color: rgba(245,248,232,.62);
+      font-size: 9px;
+      letter-spacing: .06em;
+    }
+    .key-guide span { white-space: nowrap; }
+    kbd {
+      display: inline-block;
+      min-width: 19px;
+      margin-right: 4px;
+      padding: 3px 4px;
+      border: 1px solid rgba(255,255,255,.27);
+      border-radius: 3px;
+      color: rgba(255,255,255,.89);
+      font: inherit;
+    }
+
+    .message {
+      position: fixed;
+      z-index: 4;
+      left: 50%;
+      top: 50%;
+      max-width: min(560px, calc(100% - 36px));
+      padding: 18px 22px;
+      border: 1px solid rgba(255,255,255,.3);
+      background: rgba(32, 48, 47, .83);
+      color: #fff;
+      font-size: 13px;
+      line-height: 1.7;
+      text-align: center;
+      transform: translate(-50%, -50%);
+    }
+    .message[hidden] { display: none; }
+
+    @media (max-width: 600px) {
+      .topbar { inset: 18px 18px auto; }
+      .bottom { inset: auto 18px 18px; align-items: flex-end; }
+      .brand-subtitle { display: none; }
+      .coordinates { font-size: 9px; }
+      .location-note { max-width: 190px; line-height: 1.5; }
+      .actions { flex-direction: column; }
+      button { min-height: 33px; }
+      .card { padding: 34px 22px 29px; }
+      .key-guide { gap: 10px; font-size: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="world" aria-label="Трёхмерная лужайка"></canvas>
+  <audio id="music" src="./mice_on_venusextra_nostalgic.mp3" loop preload="auto"></audio>
+  <div class="grain"></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">✳</div>
+      <div>
+        <div class="brand-name">Место между</div>
+        <div class="brand-subtitle">прогулка по тихому лугу</div>
+      </div>
+    </div>
+    <div class="coordinates" id="coordinates">СЕКТОР 00 · 00<br>ВЕТЕР 03 М/С</div>
+  </header>
+  <div class="crosshair"></div>
+  <footer class="bottom">
+    <div class="location">
+      <span class="location-dot"></span>
+      <div>
+        <div class="location-name">Зелёная тишина</div>
+        <div class="location-note">Холмы помнят дорогу, которой нет</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="sound" type="button" aria-pressed="false">♫　ЗВУК ВЫКЛ</button>
+      <button id="fullscreen" type="button">РАЗВЕРНУТЬ</button>
+    </div>
+  </footer>
+  <section class="welcome" id="welcome" aria-label="Начало прогулки">
+    <div class="card">
+      <div class="eyebrow">тихое место · 04:17 PM</div>
+      <h1>Тихий луг</h1>
+      <p class="intro">Долина тянется за горизонт.<br>И каждый арочный проход ведёт дальше.</p>
+      <button class="start" id="start" type="button">НАЧАТЬ ПРОГУЛКУ</button>
+      <div class="key-guide">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> идти</span>
+        <span><kbd>мышь</kbd> смотреть</span>
+        <span><kbd>пробел</kbd> прыгать</span>
+        <span><kbd>M</kbd> звук</span>
+      </div>
+    </div>
+  </section>
+  <div class="message" id="message" role="alert" hidden></div>
+
+  <script type="module">
+    const canvas = document.querySelector("#world");
+    const message = document.querySelector("#message");
+    const welcome = document.querySelector("#welcome");
+    const coordinates = document.querySelector("#coordinates");
+    const startButton = document.querySelector("#start");
+    const soundButton = document.querySelector("#sound");
+    const fullscreenButton = document.querySelector("#fullscreen");
+    const music = document.querySelector("#music");
+    music.volume = 0.45;
+
+    const showMessage = (text) => {
+      message.textContent = text;
+      message.hidden = false;
+    };
+
+    if (!navigator.gpu) {
+      showMessage("Для этой прогулки нужен браузер с поддержкой WebGPU. Откройте страницу в актуальной версии Chrome или Edge и запустите её через локальный веб-сервер.");
+    } else {
+      try {
+        await startWorld();
+      } catch (error) {
+        console.error("Не удалось запустить сцену WebGPU:", error);
+        showMessage(`Не удалось запустить сцену: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    async function startWorld() {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) throw new Error("совместимый графический адаптер не найден.");
+      const device = await adapter.requestDevice();
+      const context = canvas.getContext("webgpu");
+      if (!context) throw new Error("не удалось создать WebGPU-контекст.");
+      const format = navigator.gpu.getPreferredCanvasFormat();
+
+      const perspective = (fov, aspect, near, far) => {
+        const f = 1 / Math.tan(fov / 2);
+        const nf = 1 / (near - far);
+        const out = new Float32Array(16);
+        out[0] = f / aspect;
+        out[5] = f;
+        out[10] = (far + near) * nf;
+        out[11] = -1;
+        out[14] = 2 * far * near * nf;
+        return out;
+      };
+      const lookAt = (eye, target, up) => {
+        let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+        let length = Math.hypot(zx, zy, zz) || 1;
+        zx /= length; zy /= length; zz /= length;
+        let xx = up[1] * zz - up[2] * zy;
+        let xy = up[2] * zx - up[0] * zz;
+        let xz = up[0] * zy - up[1] * zx;
+        length = Math.hypot(xx, xy, xz) || 1;
+        xx /= length; xy /= length; xz /= length;
+        const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+        return new Float32Array([
+          xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+          -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
+          -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
+          -(zx * eye[0] + zy * eye[1] + zz * eye[2]), 1
+        ]);
+      };
+      const multiply = (a, b) => {
+        const out = new Float32Array(16);
+        for (let c = 0; c < 4; c++) {
+          for (let r = 0; r < 4; r++) {
+            out[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+          }
+        }
+        return out;
+      };
+
+      const sceneShader = device.createShaderModule({ code: /* wgsl */`
+        struct Camera {
+          viewProjection: mat4x4<f32>,
+          eye: vec4<f32>,
+          clock: vec4<f32>,
+        };
+        @group(0) @binding(0) var<uniform> camera: Camera;
+        struct Input {
+          @location(0) position: vec3<f32>,
+          @location(1) color: vec3<f32>,
+        };
+        struct Output {
+          @builtin(position) clip: vec4<f32>,
+          @location(0) color: vec3<f32>,
+          @location(1) height: f32,
+          @location(2) worldPosition: vec3<f32>,
+        };
+        @vertex fn vertexMain(input: Input) -> Output {
+          var out: Output;
+          out.clip = camera.viewProjection * vec4<f32>(input.position, 1.0);
+          out.color = input.color;
+          out.height = input.position.y;
+          out.worldPosition = input.position;
+          return out;
+        }
+        @fragment fn fragmentMain(input: Output) -> @location(0) vec4<f32> {
+          let fog = smoothstep(130.0, 340.0, distance(camera.eye.xyz, input.worldPosition));
+          let fogColor = vec3<f32>(0.72, 0.60, 0.48);
+          return vec4<f32>(mix(input.color, fogColor, fog * 0.76), 1.0);
+        }
+      `});
+      const grassShader = device.createShaderModule({ code: /* wgsl */`
+        struct Camera {
+          viewProjection: mat4x4<f32>,
+          eye: vec4<f32>,
+          grassOrigin: vec4<f32>,
+          clock: vec4<f32>,
+        };
+        @group(0) @binding(0) var<uniform> camera: Camera;
+        @group(0) @binding(1) var<uniform> grassChunk: vec4<f32>;
+        struct Output {
+          @builtin(position) clip: vec4<f32>,
+          @location(0) color: vec3<f32>,
+          @location(1) bladePosition: vec3<f32>,
+        };
+        fn hash(n: f32) -> f32 {
+          return fract(sin(n * 127.1 + 311.7) * 43758.5453);
+        }
+        fn hash2(p: vec2<f32>) -> f32 {
+          return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+        }
+        fn terrainHeight(x: f32, z: f32) -> f32 {
+          return 12.0 * sin(x * 0.011 + z * 0.007) +
+            8.5 * sin(z * 0.016 - x * 0.009 + 1.1) +
+            5.0 * cos(x * 0.023 + z * 0.019 - 0.8) +
+            3.1 * sin(x * 0.041 - z * 0.027 + 2.4) +
+            1.5 * cos(z * 0.065 + x * 0.052);
+        }
+        @vertex fn vertexMain(
+          @builtin(vertex_index) vertexIndex: u32,
+          @builtin(instance_index) instanceIndex: u32
+        ) -> Output {
+          let sideCount = 64u;
+          let localInstance = instanceIndex % (sideCount * sideCount * 3u);
+          let cell = localInstance / 3u;
+          let tuft = localInstance % 3u;
+          let gx = cell % sideCount;
+          let gz = cell / sideCount;
+          let seed = f32(cell * 3u + tuft);
+          let spacing = 0.30;
+          let globalCell = grassChunk.xy / spacing + vec2<f32>(f32(gx), f32(gz));
+          let tuftPosition = globalCell + vec2<f32>(f32(tuft) * 17.31, f32(tuft) * 43.17);
+          let offsetX = (hash2(tuftPosition + vec2<f32>(3.0, 9.0)) - 0.5) * spacing * 0.68;
+          let offsetZ = (hash2(tuftPosition + vec2<f32>(19.0, 27.0)) - 0.5) * spacing * 0.68;
+          let worldX = grassChunk.x + (f32(gx) + 0.5) * spacing + offsetX;
+          let worldZ = grassChunk.y + (f32(gz) + 0.5) * spacing + offsetZ;
+          let ground = terrainHeight(worldX, worldZ);
+          let angle = hash2(tuftPosition + vec2<f32>(19.0, 31.0)) * 6.2831853 + f32(tuft) * 2.0943951;
+          let height = 0.34 + pow(hash2(tuftPosition + vec2<f32>(41.0, 57.0)), 0.82) * 0.72;
+          let width = 0.07 + hash2(tuftPosition + vec2<f32>(27.0, 39.0)) * 0.09;
+          let gust = sin(camera.clock.x * 0.85 + worldX * 0.031 + worldZ * 0.024);
+          let sway = gust * (0.12 + hash(seed + 71.0) * 0.24);
+          let axis = vec2<f32>(cos(angle), sin(angle));
+          let points = array<vec3<f32>, 6>(
+            vec3<f32>(-0.5, 0.0, 0.0), vec3<f32>(0.5, 0.0, 0.0), vec3<f32>(-0.23, 0.55, 0.28),
+            vec3<f32>(-0.23, 0.55, 0.28), vec3<f32>(0.5, 0.0, 0.0), vec3<f32>(0.0, 1.0, 1.0)
+          );
+          let point = points[vertexIndex];
+          let x = worldX + axis.x * point.x * width + sway * point.z;
+          let z = worldZ + axis.y * point.x * width + sway * point.z * 0.38;
+          let y = ground + 0.055 + point.y * height;
+          let variation = hash2(tuftPosition + vec2<f32>(57.0, 63.0));
+          let green = 0.31 + variation * 0.38;
+          var out: Output;
+          out.clip = camera.viewProjection * vec4<f32>(x, y, z, 1.0);
+          out.color = mix(vec3<f32>(0.055, 0.12, 0.03), vec3<f32>(0.12 + variation * 0.11, green, 0.05 + variation * 0.055), point.y);
+          out.bladePosition = vec3<f32>(x, y, z);
+          return out;
+        }
+        @fragment fn fragmentMain(input: Output) -> @location(0) vec4<f32> {
+          let distanceToEye = distance(camera.eye.xyz, input.bladePosition);
+          let meadowColor = mix(input.color, vec3<f32>(0.13, 0.22, 0.07), smoothstep(24.0, 88.0, distanceToEye) * 0.82);
+          let fog = smoothstep(135.0, 310.0, distanceToEye);
+          return vec4<f32>(mix(meadowColor, vec3<f32>(0.73, 0.59, 0.46), fog * 0.64), 1.0);
+        }
+      `});
+      const viewportSkyShader = device.createShaderModule({ code: /* wgsl */`
+        struct Sky {
+          lens: vec4<f32>,
+          right: vec4<f32>,
+          up: vec4<f32>,
+          forward: vec4<f32>,
+          sunDirection: vec4<f32>,
+        }
+        @group(0) @binding(0) var<uniform> sky: Sky;
+        @vertex fn vertexMain(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+          let p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+          return vec4<f32>(p[i], 1.0, 1.0);
+        }
+        @fragment fn fragmentMain(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+          let ndc = vec2<f32>(p.x / sky.lens.x * 2.0 - 1.0, 1.0 - p.y / sky.lens.y * 2.0);
+          let ray = normalize(sky.forward.xyz +
+            sky.right.xyz * ndc.x * sky.lens.z * sky.lens.w +
+            sky.up.xyz * ndc.y * sky.lens.w);
+          let sunDot = max(dot(ray, normalize(sky.sunDirection.xyz)), 0.0);
+          let horizon = 1.0 - smoothstep(-0.12, 0.78, ray.y);
+          let zenith = vec3<f32>(0.13, 0.23, 0.40);
+          let blue = vec3<f32>(0.33, 0.42, 0.59);
+          let rose = vec3<f32>(0.83, 0.40, 0.27);
+          let gold = vec3<f32>(1.0, 0.67, 0.36);
+          let dusk = mix(zenith, blue, smoothstep(0.0, 0.75, ray.y));
+          var color = mix(dusk, rose, pow(horizon, 2.1) * 0.68);
+          color = mix(color, gold, exp(-abs(ray.y + 0.035) * 15.0) * 0.74);
+          let sunGlow = pow(sunDot, 28.0) * 0.6 + pow(sunDot, 5.0) * 0.24;
+          let sunDisc = smoothstep(0.9980, 0.9992, sunDot);
+          color += vec3<f32>(1.0, 0.73, 0.43) * (sunGlow + sunDisc * 1.8);
+          let cloudSpace = ray.xz / max(ray.y + 0.32, 0.16);
+          let warp = sin(cloudSpace.x * 1.8) * 0.16 + sin(cloudSpace.x * 3.1) * 0.055;
+          let bandOne = 1.0 - smoothstep(0.06, 0.24, abs(cloudSpace.y + 1.15 + warp));
+          let bandTwo = 1.0 - smoothstep(0.08, 0.26, abs(cloudSpace.y + 1.9 + warp * 0.72 + sin(cloudSpace.x * 3.0) * 0.07));
+          let breaks = 0.45 + 0.55 * (0.5 + 0.5 * sin(cloudSpace.x * 3.8 + cloudSpace.y * 1.5 + sin(cloudSpace.x * 2.0)));
+          let cloudMask = max(bandOne, bandTwo) * breaks *
+            smoothstep(-0.08, 0.08, ray.y) * (1.0 - smoothstep(0.55, 0.82, ray.y));
+          let cloudColor = mix(vec3<f32>(0.28, 0.30, 0.43), vec3<f32>(1.0, 0.71, 0.49), pow(sunDot, 3.0));
+          color = mix(color, cloudColor, cloudMask * 0.92);
+          return vec4<f32>(color, 1.0);
+        }
+      `});
+      const bubbleShader = device.createShaderModule({ code: /* wgsl */`
+        struct Camera {
+          viewProjection: mat4x4<f32>,
+          eye: vec4<f32>,
+          grassOrigin: vec4<f32>,
+          clock: vec4<f32>,
+        };
+        @group(0) @binding(0) var<uniform> camera: Camera;
+        struct Output {
+          @builtin(position) clip: vec4<f32>,
+          @location(0) normal: vec3<f32>,
+          @location(1) worldPosition: vec3<f32>,
+          @location(2) life: f32,
+          @location(3) tint: vec3<f32>,
+        };
+        fn hash2(p: vec2<f32>) -> f32 {
+          return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+        }
+        fn terrainHeight(x: f32, z: f32) -> f32 {
+          let spacing = 1000.0 / 700.0;
+          let grid = clamp((vec2<f32>(x, z) + vec2<f32>(500.0)) / spacing, vec2<f32>(0.0), vec2<f32>(699.999));
+          let cell = floor(grid);
+          let f = fract(grid);
+          let h00 = terrainProfile(cell.x * spacing - 500.0, cell.y * spacing - 500.0);
+          let h10 = terrainProfile((cell.x + 1.0) * spacing - 500.0, cell.y * spacing - 500.0);
+          let h01 = terrainProfile(cell.x * spacing - 500.0, (cell.y + 1.0) * spacing - 500.0);
+          let h11 = terrainProfile((cell.x + 1.0) * spacing - 500.0, (cell.y + 1.0) * spacing - 500.0);
+          if (f.y <= f.x) {
+            return h00 * (1.0 - f.x) + h10 * (f.x - f.y) + h11 * f.y;
+          }
+          return h00 * (1.0 - f.y) + h11 * f.x + h01 * (f.y - f.x);
+        }
+        fn terrainProfile(x: f32, z: f32) -> f32 {
+          return 12.0 * sin(x * 0.011 + z * 0.007) +
+            8.5 * sin(z * 0.016 - x * 0.009 + 1.1) +
+            5.0 * cos(x * 0.023 + z * 0.019 - 0.8) +
+            3.1 * sin(x * 0.041 - z * 0.027 + 2.4) +
+            1.5 * cos(z * 0.065 + x * 0.052);
+        }
+        fn spherePoint(index: u32) -> vec3<f32> {
+          let longitudeCount = 12u;
+          let latitudeCount = 8u;
+          let triangle = index / 3u;
+          let quad = triangle / 2u;
+          let row = quad / longitudeCount;
+          let column = quad % longitudeCount;
+          let upperLeft = vec2<f32>(f32(column) / f32(longitudeCount), f32(row) / f32(latitudeCount));
+          let lowerRight = upperLeft + vec2<f32>(1.0 / f32(longitudeCount), 1.0 / f32(latitudeCount));
+          var uv: vec2<f32>;
+          if (triangle % 2u == 0u) {
+            let corners = array<vec2<f32>, 3>(upperLeft, vec2<f32>(lowerRight.x, upperLeft.y), lowerRight);
+            uv = corners[index % 3u];
+          } else {
+            let corners = array<vec2<f32>, 3>(upperLeft, lowerRight, vec2<f32>(upperLeft.x, lowerRight.y));
+            uv = corners[index % 3u];
+          }
+          let longitude = uv.x * 6.2831853;
+          let latitude = uv.y * 3.14159265;
+          return vec3<f32>(sin(latitude) * cos(longitude), cos(latitude), sin(latitude) * sin(longitude));
+        }
+        @vertex fn vertexMain(
+          @builtin(vertex_index) vertexIndex: u32,
+          @builtin(instance_index) instanceIndex: u32
+        ) -> Output {
+          let id = f32(instanceIndex);
+          let seed = vec2<f32>(id + 17.0, id * 1.73 + 31.0);
+          let x = -490.0 + hash2(seed) * 980.0;
+          let z = -490.0 + hash2(seed + vec2<f32>(47.0, 83.0)) * 980.0;
+          let phase = fract(camera.clock.x / 19.0 + hash2(seed + vec2<f32>(111.0, 37.0)));
+          let radius = 0.36 + hash2(seed + vec2<f32>(91.0, 13.0)) * 0.78;
+          let center = vec3<f32>(x, terrainHeight(x, z) + 1.3 + phase * (18.0 + radius * 9.0), z);
+          let normal = spherePoint(vertexIndex);
+          let worldPosition = center + normal * radius;
+          var out: Output;
+          out.clip = camera.viewProjection * vec4<f32>(worldPosition, 1.0);
+          out.normal = normal;
+          out.worldPosition = worldPosition;
+          out.life = smoothstep(0.0, 0.055, phase) * (1.0 - smoothstep(0.88, 1.0, phase));
+          out.tint = mix(vec3<f32>(0.62, 0.84, 0.95), vec3<f32>(0.99, 0.68, 0.86), hash2(seed + vec2<f32>(23.0, 71.0)));
+          return out;
+        }
+        @fragment fn fragmentMain(input: Output) -> @location(0) vec4<f32> {
+          if (distance(camera.eye.xyz, input.worldPosition) > 250.0) { discard; }
+          let viewDirection = normalize(camera.eye.xyz - input.worldPosition);
+          let fresnel = pow(1.0 - abs(dot(normalize(input.normal), viewDirection)), 2.2);
+          let highlight = pow(max(dot(reflect(-viewDirection, normalize(input.normal)), vec3<f32>(0.2, 0.9, -0.4)), 0.0), 24.0);
+          let color = mix(input.tint, vec3<f32>(1.0, 0.94, 0.85), min(1.0, fresnel * 0.72 + highlight * 0.9));
+          let alpha = (0.07 + fresnel * 0.36 + highlight * 0.32) * input.life;
+          if (alpha < 0.018) { discard; }
+          return vec4<f32>(color, alpha);
+        }
+      `});
+
+      const makePipeline = (shader, layouts, vertexBuffers, depthCompare = "less", depthWriteEnabled = true) =>
+        device.createRenderPipeline({
+          layout: "auto",
+          vertex: { module: shader, entryPoint: "vertexMain", buffers: vertexBuffers },
+          fragment: { module: shader, entryPoint: "fragmentMain", targets: [{ format }] },
+          primitive: { topology: "triangle-list", cullMode: "none" },
+          depthStencil: { format: "depth24plus", depthWriteEnabled, depthCompare }
+        });
+
+      const scenePipeline = makePipeline(sceneShader, [], [{
+        arrayStride: 24,
+        attributes: [
+          { shaderLocation: 0, offset: 0, format: "float32x3" },
+          { shaderLocation: 1, offset: 12, format: "float32x3" }
+        ]
+      }]);
+      const grassChunkLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+          { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 } }
+        ]
+      });
+      const grassPipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [grassChunkLayout] }),
+        vertex: { module: grassShader, entryPoint: "vertexMain" },
+        fragment: { module: grassShader, entryPoint: "fragmentMain", targets: [{ format }] },
+        primitive: { topology: "triangle-list", cullMode: "none" },
+        depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" }
+      });
+      const skyPipeline = device.createRenderPipeline({
+        layout: "auto",
+        vertex: { module: viewportSkyShader, entryPoint: "vertexMain" },
+        fragment: { module: viewportSkyShader, entryPoint: "fragmentMain", targets: [{ format }] },
+        primitive: { topology: "triangle-list" },
+        depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" }
+      });
+
+      const cameraBuffer = device.createBuffer({ size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const cameraBindGroup = device.createBindGroup({
+        layout: scenePipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: cameraBuffer } }]
+      });
+      const grassSpacing = 0.30;
+      const grassChunkCells = 64;
+      const grassChunkSize = grassSpacing * grassChunkCells;
+      const grassChunksPerSide = Math.ceil(1000 / grassChunkSize);
+      const grassChunkStride = device.limits.minUniformBufferOffsetAlignment;
+      const grassChunkBuffer = device.createBuffer({
+        size: grassChunksPerSide * grassChunksPerSide * grassChunkStride,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      const grassChunkPositions = new Float32Array(grassChunksPerSide * grassChunksPerSide * grassChunkStride / 4);
+      for (let z = 0; z < grassChunksPerSide; z++) {
+        for (let x = 0; x < grassChunksPerSide; x++) {
+          const offset = (z * grassChunksPerSide + x) * grassChunkStride / 4;
+          grassChunkPositions[offset] = -500 + x * grassChunkSize;
+          grassChunkPositions[offset + 1] = -500 + z * grassChunkSize;
+        }
+      }
+      device.queue.writeBuffer(grassChunkBuffer, 0, grassChunkPositions);
+      const grassBindGroup = device.createBindGroup({
+        layout: grassChunkLayout,
+        entries: [
+          { binding: 0, resource: { buffer: cameraBuffer } },
+          { binding: 1, resource: { buffer: grassChunkBuffer, size: 16 } }
+        ]
+      });
+      const bubblePipeline = device.createRenderPipeline({
+        layout: "auto",
+        vertex: { module: bubbleShader, entryPoint: "vertexMain" },
+        fragment: {
+          module: bubbleShader,
+          entryPoint: "fragmentMain",
+          targets: [{
+            format,
+            blend: {
+              color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+              alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+            }
+          }]
+        },
+        primitive: { topology: "triangle-list", cullMode: "none" },
+        depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "less" }
+      });
+      const bubbleBindGroup = device.createBindGroup({
+        layout: bubblePipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: cameraBuffer } }]
+      });
+      const skyBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const skyBindGroup = device.createBindGroup({
+        layout: skyPipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: skyBuffer } }]
+      });
+
+      let depthTexture;
+      let width = 0, height = 0;
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.7);
+        const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+        const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+        if (w === width && h === height) return;
+        width = w; height = h;
+        canvas.width = w; canvas.height = h;
+        context.configure({ device, format, alphaMode: "opaque" });
+        depthTexture?.destroy();
+        depthTexture = device.createTexture({ size: [w, h], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+      }
+      new ResizeObserver(resize).observe(canvas);
+      resize();
+
+      const vertices = [];
+      const addTriangle = (a, b, c, color) => {
+        const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const normal = [
+          ab[1] * ac[2] - ab[2] * ac[1],
+          ab[2] * ac[0] - ab[0] * ac[2],
+          ab[0] * ac[1] - ab[1] * ac[0]
+        ];
+        const normalLength = Math.hypot(...normal) || 1;
+        const sun = [0.43, 0.26, -0.86];
+        const diffuse = Math.max(0, (normal[0] * sun[0] + normal[1] * sun[1] + normal[2] * sun[2]) / normalLength);
+        const brightness = 0.48 + Math.abs(normal[1] / normalLength) * 0.29 + diffuse * 0.52;
+        for (const p of [a, b, c]) vertices.push(p[0], p[1], p[2], color[0] * brightness, color[1] * brightness, color[2] * brightness);
+      };
+      const addQuad = (a, b, c, d, color) => {
+        addTriangle(a, b, c, color);
+        addTriangle(a, c, d, color);
+      };
+      const seeded = (n) => {
+        const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+        return x - Math.floor(x);
+      };
+      const hash2 = (x, z) => {
+        const value = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+        return value - Math.floor(value);
+      };
+      const terrainProfile = (x, z) =>
+        12 * Math.sin(x * 0.011 + z * 0.007) +
+        8.5 * Math.sin(z * 0.016 - x * 0.009 + 1.1) +
+        5 * Math.cos(x * 0.023 + z * 0.019 - 0.8) +
+        3.1 * Math.sin(x * 0.041 - z * 0.027 + 2.4) +
+        1.5 * Math.cos(z * 0.065 + x * 0.052);
+      const terrainSize = 1000, terrainSteps = 700;
+      const terrainSpacing = terrainSize / terrainSteps;
+      const terrainHeights = new Float32Array((terrainSteps + 1) * (terrainSteps + 1));
+      for (let z = 0; z <= terrainSteps; z++) {
+        for (let x = 0; x <= terrainSteps; x++) {
+          terrainHeights[z * (terrainSteps + 1) + x] =
+            terrainProfile(-terrainSize / 2 + x * terrainSpacing, -terrainSize / 2 + z * terrainSpacing);
+        }
+      }
+      const sampleTerrain = (x, z) => {
+        const gridX = Math.max(0, Math.min(terrainSteps - 0.0001, (x + terrainSize / 2) / terrainSpacing));
+        const gridZ = Math.max(0, Math.min(terrainSteps - 0.0001, (z + terrainSize / 2) / terrainSpacing));
+        const cellX = Math.floor(gridX), cellZ = Math.floor(gridZ);
+        const fx = gridX - cellX, fz = gridZ - cellZ;
+        const row = cellZ * (terrainSteps + 1);
+        const h00 = terrainHeights[row + cellX];
+        const h10 = terrainHeights[row + cellX + 1];
+        const h01 = terrainHeights[row + terrainSteps + 1 + cellX];
+        const h11 = terrainHeights[row + terrainSteps + 2 + cellX];
+        if (fz <= fx) return h00 * (1 - fx) + h10 * (fx - fz) + h11 * fz;
+        return h00 * (1 - fz) + h11 * fx + h01 * (fz - fx);
+      };
+      const terrainData = new Float32Array(terrainSteps * terrainSteps * 6 * 6);
+      let terrainCursor = 0;
+      const writeTerrainTriangle = (a, b, c, color) => {
+        const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+        const acx = c[0] - a[0], acy = c[1] - a[1], acz = c[2] - a[2];
+        const nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx;
+        const normalLength = Math.hypot(nx, ny, nz) || 1;
+        const diffuse = Math.max(0, (nx * 0.43 + ny * 0.26 - nz * 0.86) / normalLength);
+        const brightness = 0.48 + Math.abs(ny / normalLength) * 0.29 + diffuse * 0.52;
+        for (const point of [a, b, c]) {
+          terrainData[terrainCursor++] = point[0];
+          terrainData[terrainCursor++] = point[1];
+          terrainData[terrainCursor++] = point[2];
+          terrainData[terrainCursor++] = color[0] * brightness;
+          terrainData[terrainCursor++] = color[1] * brightness;
+          terrainData[terrainCursor++] = color[2] * brightness;
+        }
+      };
+      for (let z = 0; z < terrainSteps; z++) {
+        const z0 = -terrainSize / 2 + z * terrainSpacing;
+        const z1 = z0 + terrainSpacing;
+        for (let x = 0; x < terrainSteps; x++) {
+          const x0 = -terrainSize / 2 + x * terrainSpacing;
+          const x1 = x0 + terrainSpacing;
+          const row = z * (terrainSteps + 1);
+          const h00 = terrainHeights[row + x], h10 = terrainHeights[row + x + 1];
+          const h01 = terrainHeights[row + terrainSteps + 1 + x], h11 = terrainHeights[row + terrainSteps + 2 + x];
+          const variation = seeded(x * 419 + z * 977);
+          const heightTint = Math.max(0, Math.min(1, (h00 + h10 + h01 + h11) * 0.015));
+          const color = [
+            0.075 + variation * 0.035 + heightTint * 0.025,
+            0.16 + variation * 0.075 + heightTint * 0.035,
+            0.035 + variation * 0.03
+          ];
+          writeTerrainTriangle([x0, h00, z0], [x1, h10, z0], [x1, h11, z1], color);
+          writeTerrainTriangle([x0, h00, z0], [x1, h11, z1], [x0, h01, z1], color);
+        }
+      }
+      const terrainBuffer = device.createBuffer({
+        size: terrainData.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+      });
+      device.queue.writeBuffer(terrainBuffer, 0, terrainData);
+      const terrainVertexCount = terrainData.length / 6;
+
+      function addArch(cx, cz, width, material, yaw = 0, segments = 48, tube = 0.6) {
+        const radius = width / 2;
+        const base = sampleTerrain(cx, cz);
+        const sides = 12;
+        const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
+        for (let i = 0; i < segments; i++) {
+          const a0 = Math.PI * i / segments, a1 = Math.PI * (i + 1) / segments;
+          for (let j = 0; j < sides; j++) {
+            const b0 = Math.PI * 2 * j / sides, b1 = Math.PI * 2 * (j + 1) / sides;
+            const point = (a, b) => {
+              const centerLocalX = Math.cos(a) * radius;
+              const centerX = cx + centerLocalX * cosYaw;
+              const centerZ = cz + centerLocalX * sinYaw;
+              const centerY = base + Math.sin(a) * radius +
+                (sampleTerrain(centerX, centerZ) - base) * (1 - Math.sin(a));
+              const offsetX = Math.cos(a) * Math.cos(b) * tube;
+              const offsetZ = Math.sin(b) * tube;
+              return [
+                centerX + offsetX * cosYaw - offsetZ * sinYaw,
+                centerY + Math.sin(a) * Math.cos(b) * tube,
+                centerZ + offsetX * sinYaw + offsetZ * cosYaw
+              ];
+            };
+            const p00 = point(a0, b0), p10 = point(a1, b0), p11 = point(a1, b1), p01 = point(a0, b1);
+            addQuad(p00, p10, p11, p01, material);
+          }
+        }
+      }
+
+      function addIvy(cx, cz, width, yaw, tube) {
+          const base = sampleTerrain(cx, cz);
+          const radius = width / 2;
+          const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
+          const place = (localX, y, localZ) => [
+            cx + localX * cosYaw - localZ * sinYaw,
+            y,
+            cz + localX * sinYaw + localZ * cosYaw
+          ];
+          const vineColors = [[0.09, 0.19, 0.055], [0.13, 0.25, 0.07], [0.2, 0.29, 0.08]];
+          for (const side of [-1, 1]) {
+            const climbHeight = Math.min(20, radius * 0.78);
+            const segments = Math.max(8, Math.floor(climbHeight / 0.9));
+            for (let i = 0; i < segments; i++) {
+              const y0 = base + i / segments * climbHeight;
+              const y1 = base + (i + 1) / segments * climbHeight;
+              const sway0 = Math.sin(i * 0.72 + side) * 0.18;
+              const sway1 = Math.sin((i + 1) * 0.72 + side) * 0.18;
+              const localX0 = side * (radius + tube * 0.62) + sway0;
+              const localX1 = side * (radius + tube * 0.62) + sway1;
+              const localZ = tube * 0.72;
+              const stemColor = [0.08, 0.15, 0.045];
+              addQuad(
+                place(localX0 - 0.035, y0, localZ), place(localX0 + 0.035, y0, localZ),
+                place(localX1 + 0.035, y1, localZ), place(localX1 - 0.035, y1, localZ), stemColor
+              );
+              if (i % 2 === 0) {
+                const leafLength = 0.32 + seeded(i * 11 + side * 17 + width) * 0.32;
+                const leafY = y0 + (y1 - y0) * 0.58;
+                const leafDirection = (i % 4 === 0 ? 1 : -1) * side;
+                const leafColor = vineColors[i % vineColors.length];
+                addTriangle(
+                  place(localX0, leafY, localZ + 0.04),
+                  place(localX0 + leafDirection * leafLength, leafY + 0.12, localZ + 0.09),
+                  place(localX0 + leafDirection * leafLength * 0.72, leafY + 0.42, localZ + 0.04),
+                  leafColor
+                );
+                addTriangle(
+                  place(localX0, leafY, localZ + 0.04),
+                  place(localX0 + leafDirection * leafLength * 0.72, leafY + 0.42, localZ + 0.04),
+                  place(localX0 - leafDirection * 0.09, leafY + 0.29, localZ + 0.07),
+                  leafColor
+                );
+              }
+            }
+          }
+        }
+
+      function addCylinder(cx, cz, bottom, top, radiusBottom, radiusTop, color, segments = 16) {
+        for (let i = 0; i < segments; i++) {
+          const a0 = i * Math.PI * 2 / segments, a1 = (i + 1) * Math.PI * 2 / segments;
+          const p0 = [cx + Math.cos(a0) * radiusBottom, bottom, cz + Math.sin(a0) * radiusBottom];
+          const p1 = [cx + Math.cos(a1) * radiusBottom, bottom, cz + Math.sin(a1) * radiusBottom];
+          const p2 = [cx + Math.cos(a1) * radiusTop, top, cz + Math.sin(a1) * radiusTop];
+          const p3 = [cx + Math.cos(a0) * radiusTop, top, cz + Math.sin(a0) * radiusTop];
+          addQuad(p0, p1, p2, p3, color);
+        }
+      }
+
+      const archLanes = [-282, -94, 94, 282];
+      const archWidths = [
+        [24, 34, 20, 45, 31, 78, 28, 122, 40],
+        [32, 22, 52, 27, 96, 38, 34, 148, 25],
+        [20, 43, 26, 88, 34, 48, 132, 27, 56],
+        [38, 25, 72, 30, 118, 22, 44, 156, 33]
+      ];
+      const arches = [];
+      for (let lane = 0; lane < archLanes.length; lane++) {
+        for (let row = 0; row < 9; row++) {
+          const x = archLanes[lane] + Math.sin(row * 1.7 + lane) * 11;
+          const z = 420 - row * 105 + (lane % 2) * 24;
+          const width = archWidths[lane][row];
+          const material = row % 3 === 0 ? [0.52, 0.46, 0.38] : [0.46, 0.46, 0.43];
+          const yaw = (lane % 2 === 0 ? -1 : 1) * (0.025 + row % 3 * 0.035);
+          arches.push([x, z, width, material, yaw]);
+        }
+      }
+      for (const [x, z, w, color, yaw] of arches) {
+        const tube = Math.min(9, Math.max(1.0, w * 0.065));
+        addArch(x, z, w, color, yaw, Math.max(52, Math.floor(w * 0.72)), tube);
+        if (w >= 70) addIvy(x, z, w, yaw, tube);
+      }
+
+      const flowerColors = [
+        [0.92, 0.73, 0.42], [0.87, 0.82, 0.66], [0.74, 0.48, 0.47], [0.72, 0.69, 0.82]
+      ];
+      for (let i = 0; i < 4200; i++) {
+        const x = (seeded(i * 3 + 400) - 0.5) * 850;
+        const z = (seeded(i * 3 + 401) - 0.5) * 850;
+        const ground = sampleTerrain(x, z);
+        const stemHeight = 0.22 + seeded(i * 3 + 402) * 0.42;
+        const stemColor = [0.12, 0.22, 0.07];
+        addCylinder(x, z, ground, ground + stemHeight, 0.018, 0.009, stemColor, 4);
+        const petals = flowerColors[Math.floor(seeded(i * 3 + 403) * flowerColors.length)];
+        const head = [x, ground + stemHeight, z];
+        const radius = 0.045 + seeded(i * 3 + 404) * 0.055;
+        for (let petal = 0; petal < 4; petal++) {
+          const angle = petal * Math.PI / 4 + seeded(i + 405) * 0.7;
+          const dx = Math.cos(angle) * radius, dz = Math.sin(angle) * radius;
+          addTriangle(head, [x + dx, head[1] - radius * 0.35, z + dz], [x - dz, head[1] + radius * 0.25, z + dx], petals);
+        }
+      }
+
+      const turbineSpecs = [
+        ...[-350, -175, 0, 175, 350].flatMap((x, column) =>
+          [-390, -195, 0, 195, 390].map((z, row) => [
+            x + (row % 2 ? 28 : -20),
+            z + (column % 2 ? 20 : -16),
+            34 + seeded(column * 23 + row * 17) * 38,
+            (seeded(column * 47 + row * 31) - 0.5) * 0.22,
+            (seeded(column * 59 + row * 37) - 0.5) * 0.42
+          ])
+        )
+      ];
+
+      const staticData = new Float32Array(vertices);
+      const staticBuffer = device.createBuffer({ size: staticData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(staticBuffer, 0, staticData);
+      const staticVertexCount = staticData.length / 6;
+
+      const turbineCapacity = turbineSpecs.length * (16 * 6 + 3 * 12 + 12 * 6) * 6;
+      const turbineBuffer = device.createBuffer({ size: turbineCapacity * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+      function updateTurbines(time) {
+        vertices.length = 0;
+        for (let k = 0; k < turbineSpecs.length; k++) {
+          const [x, z, towerHeight, speed, facing] = turbineSpecs[k];
+          const ground = sampleTerrain(x, z);
+          const hubY = ground + towerHeight;
+          const metal = [0.53, 0.56, 0.57];
+          addCylinder(x, z, ground, hubY, towerHeight * 0.045, towerHeight * 0.027, metal, 16);
+          const hub = [x, hubY, z];
+          const rotation = time * speed + k * 0.82;
+          for (let blade = 0; blade < 3; blade++) {
+            const angle = rotation + blade * Math.PI * 2 / 3;
+            const radialX = Math.cos(angle) * Math.cos(facing);
+            const radialZ = Math.cos(angle) * Math.sin(facing);
+            const end = [
+              x + radialX * towerHeight * 0.49,
+              hubY + Math.sin(angle) * towerHeight * 0.49,
+              z + radialZ * towerHeight * 0.49
+            ];
+            const perp = [-Math.sin(angle) * Math.cos(facing), Math.cos(angle), -Math.sin(angle) * Math.sin(facing)];
+            const widthAt = (t) => towerHeight * 0.055 * (1 - t * 0.75);
+            const a = [hub[0] + perp[0] * widthAt(0.05), hub[1] + perp[1] * widthAt(0.05), hub[2] + perp[2] * widthAt(0.05)];
+            const b = [hub[0] - perp[0] * widthAt(0.05), hub[1] - perp[1] * widthAt(0.05), hub[2] - perp[2] * widthAt(0.05)];
+            const c = [end[0] - perp[0] * widthAt(1), end[1] - perp[1] * widthAt(1), end[2] - perp[2] * widthAt(1)];
+            const d = [end[0] + perp[0] * widthAt(1), end[1] + perp[1] * widthAt(1), end[2] + perp[2] * widthAt(1)];
+            addQuad(a, b, c, d, metal);
+          }
+          addCylinder(x, z - 0.06, hubY - 0.3, hubY + 0.3, 0.36, 0.36, [0.65, 0.58, 0.46], 12);
+        }
+        const data = new Float32Array(vertices);
+        vertices.length = 0;
+        if (data.byteLength > turbineBuffer.size) throw new Error("лимит геометрии ветрогенераторов превышен.");
+        device.queue.writeBuffer(turbineBuffer, 0, data);
+        return data.length / 6;
+      }
+
+      const player = { x: 0, y: sampleTerrain(0, 70) + 1.7, z: 70, yaw: 0.12, pitch: 0.03, velocityY: 0, grounded: true };
+      const keys = new Set();
+      let pointerLocked = false;
+      let gameStarted = false;
+      let paused = false;
+      let lastTime = performance.now() / 1000;
+      let worldTime = 0;
+      let audioContext = null;
+      let audioNodes = [];
+
+      async function setSound(enabled) {
+        if (enabled && !audioContext) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContext) throw new Error("звуковой движок браузера недоступен.");
+          audioContext = new AudioContext();
+          const master = audioContext.createGain();
+          master.gain.value = 0.11;
+          master.connect(audioContext.destination);
+          const filter = audioContext.createBiquadFilter();
+          filter.type = "lowpass";
+          filter.frequency.value = 620;
+          filter.connect(master);
+          for (const [frequency, detune, volume] of [[110, -5, .25], [164.81, 3, .11], [220, -2, .07]]) {
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.type = "sine";
+            oscillator.frequency.value = frequency;
+            oscillator.detune.value = detune;
+            gain.gain.value = volume;
+            oscillator.connect(gain);
+            gain.connect(filter);
+            oscillator.start();
+            audioNodes.push(oscillator, gain);
+          }
+          const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 2, audioContext.sampleRate);
+          const samples = noiseBuffer.getChannelData(0);
+          let noise = 0;
+          for (let i = 0; i < samples.length; i++) {
+            noise = (noise + (Math.random() * 2 - 1) * 0.035) / 1.035;
+            samples[i] = noise * 2.2;
+          }
+          const wind = audioContext.createBufferSource();
+          wind.buffer = noiseBuffer;
+          wind.loop = true;
+          const windFilter = audioContext.createBiquadFilter();
+          windFilter.type = "lowpass";
+          windFilter.frequency.value = 480;
+          const windGain = audioContext.createGain();
+          windGain.gain.value = 0.24;
+          wind.connect(windFilter);
+          windFilter.connect(windGain);
+          windGain.connect(master);
+          wind.start();
+          audioNodes.push(wind, windFilter, windGain, filter, master);
+        }
+        if (enabled) {
+          await Promise.all([
+            audioContext.resume(),
+            music.play()
+          ]);
+        } else {
+          music.pause();
+          if (audioContext) await audioContext.suspend();
+        }
+        soundButton.textContent = enabled ? "♫　МУЗЫКА ВКЛ" : "♫　МУЗЫКА ВЫКЛ";
+        soundButton.setAttribute("aria-pressed", String(enabled));
+      }
+
+      const reportSoundError = (error) => {
+        console.error("Не удалось воспроизвести музыку:", error);
+        showMessage(`Не удалось воспроизвести музыку: ${error instanceof Error ? error.message : String(error)}`);
+        soundButton.textContent = "♫　МУЗЫКА ВЫКЛ";
+        soundButton.setAttribute("aria-pressed", "false");
+      };
+      soundButton.addEventListener("click", () => {
+        void setSound(soundButton.getAttribute("aria-pressed") !== "true").catch(reportSoundError);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.code !== "KeyM" || event.repeat) return;
+        void setSound(soundButton.getAttribute("aria-pressed") !== "true").catch(reportSoundError);
+      });
+      fullscreenButton.addEventListener("click", async () => {
+        try {
+          if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (error) {
+          console.error("Не удалось изменить режим экрана:", error);
+          showMessage(`Не удалось изменить режим экрана: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+      document.addEventListener("fullscreenchange", () => {
+        fullscreenButton.textContent = document.fullscreenElement ? "СВЕРНУТЬ" : "РАЗВЕРНУТЬ";
+      });
+      function requestLook() {
+        try {
+          const result = canvas.requestPointerLock();
+          if (result && typeof result.catch === "function") {
+            result.catch((error) => {
+              console.error("Браузер не разрешил управление мышью:", error);
+              welcome.classList.remove("hidden");
+              showMessage("Браузер не разрешил управление мышью. Проверьте разрешения страницы и попробуйте ещё раз.");
+            });
+          }
+        } catch (error) {
+          console.error("Не удалось включить управление мышью:", error);
+          welcome.classList.remove("hidden");
+          showMessage("Не удалось включить управление мышью. Попробуйте открыть страницу в другом браузере.");
+        }
+      }
+      startButton.addEventListener("click", () => {
+        message.hidden = true;
+        gameStarted = true;
+        paused = false;
+        startButton.textContent = "ПРОДОЛЖИТЬ";
+        void setSound(true).catch(reportSoundError);
+        requestLook();
+        welcome.classList.add("hidden");
+      });
+      canvas.addEventListener("click", () => {
+        if (!pointerLocked && welcome.classList.contains("hidden")) requestLook();
+      });
+      document.addEventListener("pointerlockchange", () => {
+        pointerLocked = document.pointerLockElement === canvas;
+        document.body.classList.toggle("playing", pointerLocked);
+        if (!pointerLocked) {
+          keys.clear();
+          paused = gameStarted;
+          if (gameStarted) welcome.classList.remove("hidden");
+        } else {
+          paused = false;
+          welcome.classList.add("hidden");
+        }
+      });
+      document.addEventListener("mousemove", (event) => {
+        if (!pointerLocked) return;
+        player.yaw -= event.movementX * 0.0022;
+        player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - event.movementY * 0.002));
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.code === "Escape") return;
+        if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
+        keys.add(event.code);
+        if (event.code === "Space" && player.grounded) {
+          player.velocityY = 7.3;
+          player.grounded = false;
+        }
+      });
+      document.addEventListener("keyup", (event) => keys.delete(event.code));
+      window.addEventListener("blur", () => keys.clear());
+
+      function updatePlayer(dt) {
+        const forward = Number(keys.has("KeyW") || keys.has("ArrowUp")) - Number(keys.has("KeyS") || keys.has("ArrowDown"));
+        const strafe = Number(keys.has("KeyD") || keys.has("ArrowRight")) - Number(keys.has("KeyA") || keys.has("ArrowLeft"));
+        const magnitude = Math.hypot(forward, strafe) || 1;
+        const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 10.4 : 6.2;
+        const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+        const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+        if (forward || strafe) {
+          player.x += (fx * forward + rx * strafe) / magnitude * speed * dt;
+          player.z += (fz * forward + rz * strafe) / magnitude * speed * dt;
+        }
+        player.x = Math.max(-440, Math.min(440, player.x));
+        player.z = Math.max(-440, Math.min(440, player.z));
+        const floor = sampleTerrain(player.x, player.z) + 1.7;
+        if (player.grounded) {
+          player.y = floor;
+        } else {
+          player.velocityY -= 18 * dt;
+          player.y += player.velocityY * dt;
+        }
+        if (!player.grounded && player.y <= floor) {
+          player.y = floor;
+          player.velocityY = 0;
+          player.grounded = true;
+        }
+        coordinates.innerHTML = `СЕКТОР ${String(Math.floor(player.x / 10 + 50)).padStart(2, "0")} · ${String(Math.floor(player.z / 10 + 50)).padStart(2, "0")}<br>ВЕТЕР 03 М/С`;
+      }
+
+      function frame(nowMs) {
+        resize();
+        const now = nowMs / 1000;
+        const dt = Math.min(now - lastTime, 0.04);
+        lastTime = now;
+        if (!paused) {
+          worldTime += dt;
+          updatePlayer(dt);
+        }
+        const direction = [
+          -Math.sin(player.yaw) * Math.cos(player.pitch),
+          Math.sin(player.pitch),
+          -Math.cos(player.yaw) * Math.cos(player.pitch)
+        ];
+        const view = lookAt([player.x, player.y, player.z], [
+          player.x + direction[0], player.y + direction[1], player.z + direction[2]
+        ], [0, 1, 0]);
+        const vp = multiply(perspective(Math.PI / 3, width / height, 0.1, 900), view);
+        const uniforms = new Float32Array(28);
+        uniforms.set(vp, 0);
+        uniforms.set([player.x, player.y, player.z, 1], 16);
+        uniforms.set([0, 0, 0, 0], 20);
+        uniforms.set([worldTime, 0, 0, 0], 24);
+        device.queue.writeBuffer(cameraBuffer, 0, uniforms);
+        const cameraRight = [Math.cos(player.yaw), 0, -Math.sin(player.yaw)];
+        const cameraUp = [
+          Math.sin(player.yaw) * Math.sin(player.pitch),
+          Math.cos(player.pitch),
+          Math.cos(player.yaw) * Math.sin(player.pitch)
+        ];
+        const sunDirection = [0.025, 0.01, -0.9996];
+        const skyUniforms = new Float32Array(20);
+        skyUniforms.set([width, height, width / height, Math.tan(Math.PI / 6)], 0);
+        skyUniforms.set([...cameraRight, 0], 4);
+        skyUniforms.set([...cameraUp, 0], 8);
+        skyUniforms.set([...direction, 0], 12);
+        skyUniforms.set([...sunDirection, 0], 16);
+        device.queue.writeBuffer(skyBuffer, 0, skyUniforms);
+        const turbineCount = updateTurbines(worldTime);
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            clearValue: { r: 0.36, g: 0.66, b: 0.76, a: 1 },
+            loadOp: "clear", storeOp: "store"
+          }],
+          depthStencilAttachment: {
+            view: depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: "clear", depthStoreOp: "store"
+          }
+        });
+        pass.setPipeline(skyPipeline);
+        pass.setBindGroup(0, skyBindGroup);
+        pass.draw(3);
+        pass.setPipeline(scenePipeline);
+        pass.setBindGroup(0, cameraBindGroup);
+        pass.setVertexBuffer(0, terrainBuffer);
+        pass.draw(terrainVertexCount);
+        pass.setVertexBuffer(0, staticBuffer);
+        pass.draw(staticVertexCount);
+        pass.setVertexBuffer(0, turbineBuffer);
+        pass.draw(turbineCount);
+        pass.setPipeline(grassPipeline);
+        const chunkRadius = 320;
+        for (let z = 0; z < grassChunksPerSide; z++) {
+          const centerZ = -500 + (z + 0.5) * grassChunkSize;
+          const dz = centerZ - player.z;
+          for (let x = 0; x < grassChunksPerSide; x++) {
+            const centerX = -500 + (x + 0.5) * grassChunkSize;
+            const dx = centerX - player.x;
+            const distance = Math.hypot(dx, dz);
+            if (distance > chunkRadius) continue;
+            const ahead = dx * direction[0] + dz * direction[2];
+            const side = Math.abs(dx * direction[2] - dz * direction[0]);
+            if (distance > 70 && ahead < -18) continue;
+            if (ahead > 0 && side > ahead * (width / height) * 0.66 + grassChunkSize) continue;
+            const chunkIndex = z * grassChunksPerSide + x;
+            pass.setBindGroup(0, grassBindGroup, [chunkIndex * grassChunkStride]);
+            pass.draw(6, grassChunkCells * grassChunkCells * 3, 0, chunkIndex * grassChunkCells * grassChunkCells * 3);
+          }
+        }
+        pass.setPipeline(bubblePipeline);
+        pass.setBindGroup(0, bubbleBindGroup);
+        pass.draw(12 * 8 * 6, 520);
+        pass.end();
+        device.queue.submit([encoder.finish()]);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+  </script>
+</body>
+</html>
